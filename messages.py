@@ -5,6 +5,9 @@ class WrongMessageLengthError(Exception):
     def __init__(self, expectedLength,gottenLength):
         super.__init__("Wrong message length (expected {} gotten {})!".format(str(expectedLength),str(gottenLength)))
 
+ACK = bytes.fromhex("0x0000000101")
+RST = bytes.fromhex("0x0000000100")
+
 def checkLength(message,lengths):
     if len(message) != sum(lengths):
         raise WrongMessageLengthError(sum(lengths),len(message))
@@ -85,6 +88,7 @@ def decode(message):
             except:
                 raise 
             (eventID) = struct.unpack("!c",message[1])
+            return (eventID,message[2:])
 
 def encode(opcode,data):
     bOpcode = bytes.fromhex(opcode)

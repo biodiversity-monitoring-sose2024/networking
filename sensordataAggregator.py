@@ -1,21 +1,10 @@
 import socket, argparse, sys, time, os, psutil
-#Testkommentar
+import messages as msg
 
 
 def create_socket(args):
     tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    #try:
     tcp_sock.bind((args.A, args.P))
-    #except:
-    #    print("Invalid IP adress or port")
-    return tcp_sock
-
-def create_socket2(args):
-    tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    #try:
-    tcp_sock.bind((args.A, 5002))
-    #except:
-    #    print("Invalid IP adress or port")
     return tcp_sock
 
 def listen_traffic(sock, args):
@@ -38,13 +27,17 @@ def listen_traffic(sock, args):
                 data = connSock.recv(262144)
                 
                 buffer = buffer + data
-                #print("Received " + str(len(buffer)) + " from " + str(size))
             connSock.close()
             time2 = time.time()
             print("Finished receiving (" + str(time2 - time1) + "s)")
-            f = open(args.D + str(time1) + ".wav" , "wb")
-            f.write(buffer)
+            (nodeID,timestamp,dataSize,soundfile) = msg.decode(buffer)
+            
+            f = open(args.D + str(timestamp) + ".wav" , "wb")
+            f.write(soundfile)
             f.close()
+            connSock.send(msg.ACK)
+            connSock.disconnect()
+            connSock.close()
             sys.exit()
 
 
@@ -61,12 +54,7 @@ def main():
     except:
         sys.exit()
     sock = create_socket(args)
-    #sock2 = create_socket2(args)
-    #pid2 = os.fork()
-    #if pid2 == 0 :
     listen_traffic(sock, args)
-    #else:
-    #    listen_traffic(sock2, args)
     
 if __name__ == "__main__":
     main()
