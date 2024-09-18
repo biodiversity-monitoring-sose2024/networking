@@ -4,12 +4,19 @@ class ReceivedRSTMessageError(Exception):
     pass
 
 class MissingACKError(Exception):
+    def __init__(self, message):
+        self.message = "Gotten: " + str(message)
+        super().__init__(self.message)
+
     pass
 
 class ReceivedRSTError(Exception):
     pass
 
 class UnexpectedMessageError(Exception):
+    def __init__(self, opcode):
+        self.message = "Gotten OPCODE: " + str(opcode)
+        super().__init__(self.message)
     pass
 
 class OutOfClusterError(Exception):
@@ -27,28 +34,26 @@ class WrongMessageLengthError(Exception):
         self.message = "Wrong message length (expected {} gotten {})!".format(str(expectedLength),str(gottenLength))
         super().__init__(self.message)
 
-
 def checkLength(message,lengths):
     if len(message) != sum(lengths):
         raise WrongMessageLengthError(sum(lengths),len(message))
     
 def ipListToBytes(ipaddresses):
-    result = []
+    result = bytearray()
     for address in ipaddresses:
         numbers = address.split(".")
-        for number in numbers: 
-            result.append(int(number).to_bytes(1,"big"))
+        for number in numbers:
+            result = result + (int(number).to_bytes(1,"big"))
     return result
 
-def byteListToIp(bytelist):
-    ipsPacked = struct.iter_unpack("4B",b"".join(bytelist))
+def byteListToIp(ipBytearray):
+    ipsPacked = struct.iter_unpack("4B",ipBytearray)
     resultFinal = []
     for addr in ipsPacked:
         result = []
         for byte in addr:
             result.append(str(byte))
         result = ".".join(result)
-        print(result)
         resultFinal.append(result)
     return resultFinal
 
@@ -129,11 +134,12 @@ class Connection():
     #0 = upper, 1 = peer
     globalConfig = [[],[]]
     path = "home/"
-    
+    debug = True
     dataTypes = {
         "01": ".wav",
         "02": ".csv"
      }
+    __serverPort = 5001
     
     """def __init__(self, connsock, upperIP, parentProcess, ownIP, path) :
         self.__sock = connsock
@@ -143,61 +149,75 @@ class Connection():
         self.__ownIP = ownIP
         self.path = path"""
     
-    def __init__(self, connsock, parentProcess, ownIP, path):
+    def __init__(self, connsock, parentProcess, ownIP, path, serverPort):
         self.__sock = connsock
-        self.__parentProcess = parentProcess
+        self.__parentID = parentProcess
+        self.__parentProcess = psutil.Process(parentProcess)
         self.__ownIP = ownIP
+        self.__macAddr = bytes.fromhex("%012x" % uuid.getnode())
+        self.__serverPort = serverPort
         self.path = path
     
     __ACK = bytes.fromhex("0000000101")
     __RST = bytes.fromhex("0000000100")
 
-    def __wrapSize(message):
-        result = len(message).to_bytes(4,"big") + encode(message)
+    def fDebug(self,message):
+        if self.debug == True:
+            print("'\033[93m'[DEBUG] " + message + '\033[0m')
+
+    def __wrapSize(self, message):
+        result = len(message).to_bytes(4,"big") + message
         return result
 
     def __sendACK(self):
         self.__sock.send(self.__ACK)
+        self.fDebug("ACK sent!")
         return
 
     def __sendRST(self):
         self.__sock.send(self.__RST)
+        self.fDebug("RST sent!")
+        raise ReceivedRSTError
         return
 
     def __sendBusy(self, time):
         message = self.__wrapSize(bytes.fromhex("02") + time.to_bytes(2,"big"))
+        self.fDebug("Busy sent!")
         self.__sock.send(message)
 
     def __awaitACK(self):
+        self.fDebug("Awaiting ACK!")
         response = self.__sock.recv(1024)
-        if int.from_bytes(response[0:5],"big") != 1 and int.from_bytes(response[0:5],"big") != 3:
-            raise MissingACKError
+        if int.from_bytes(response[0:4],"big") != 1 and int.from_bytes(response[0:],"big") != 3:
+            raise MissingACKError(response)
         else:
-            message = decode(response)
-            match message[0]:
+            opcode = response[4:5].hex()
+            match opcode:
                 case "00":
                     raise ReceivedRSTError
                 case "02":
-                    raise ReceivedBusyError(message[1])
+                    raise ReceivedBusyError(int.from_bytes(response[5:],"big"))
                 case "04":
                     raise OutOfClusterError()
                 case "01":
+                    self.fDebug("Received ACK!")
                     return
 
-    def sendMessage(self, encodedData):
+    def sendMessage(self,encodedData):
         try:
-            self.__sendMessage(self.__sock,encodedData,3)
+            self.__sendMessage(encodedData,3)
         except:
             raise
         
     def __sendMessage(self, message, tries):
         if tries == 0:
             raise ReceivedRSTError
+        
         self.__sock.send(self.__wrapSize(message))
         try:
-            self.__awaitACK(self.__sock)
+            self.__awaitACK()
         except ReceivedRSTError:
-            self.__sendMessage(self.__sock,message,tries-1)
+            self.__sendMessage(message,tries-1)
         except ReceivedBusyError:
             raise
         except Exception:
@@ -207,32 +227,31 @@ class Connection():
         
         self.__sock.send(self.__wrapSize(message))
         try:
-            self.__awaitACK(self.__sock)
+            self.__awaitACK()
         except Exception:
             raise
                  
     def __sendConfig(self):
-        self.__sendResponse(encode("03",Connection.globalConfig))
-        try:
-            self.__awaitACK(self.__sock)
-        except:
-            raise
-        return
+        self.__sendResponse(encode("03",(0, len(Connection.globalConfig[1]),Connection.globalConfig[1])))
+        self.fDebug("Config sent!")
 
     def __sendHello(self):
         #power hardcoded as 101 (inf) per cent
         power = 101
-        memory = int(psutil.virtual_memory().percent.floor())
-        hello = self.__macAddr + ipListToBytes([self.__ownIP]) + power.to_bytes(1, "big") + memory.to_bytes(1, "big")
-        try:    
-            self.__sendMessage(hello)
+        memory = int(psutil.virtual_memory().percent)
+        hello = (self.__macAddr, ipListToBytes([self.__ownIP]), power.to_bytes(1, "big"), memory.to_bytes(1, "big"))
+        message = encode("e0",hello)
+        try:
+            self.fDebug("Sending Hello Message!")    
+            self.sendMessage(message)
         except:
             raise
 
     def __recvMessage(self):
         time1 = time.time()
         try: 
-            size = self.__sock.recv(4)
+            size = int.from_bytes(self.__sock.recv(4),"big")
+            self.fDebug("Expecting message of size " + str(size))
             buffer = bytearray()
             while len(buffer) < size:
                 if (time.time()-time1) > 300:
@@ -240,38 +259,46 @@ class Connection():
                 if (self.__parentProcess.status()== psutil.STATUS_ZOMBIE):
                     self.__sock.close()
                     sys.exit()
-                data = self.__sock.recv(262144)
+                data = self.__sock.recv(256000)
+                self.fDebug("Received message part: " + str(data))
                 buffer = buffer + data
-                self.__sendACK()
+            self.fDebug("Received message of size " + str(size))
             return buffer, time.time()-time1
         except ReceivedRSTMessageError:
             raise
         except WrongMessageLengthError:
+            self.__sendRST()
             raise
         except SystemExit:
             sys.exit()
-     
+        except:
+            self.fDebug("Exception while receiving, sending RST")
+            self.__sendRST()
+            raise
+    
     def __awaitConfig(self):
+        self.fDebug("Awaiting Config!")
         try:
             message = decode(self.__recvMessage())
         except:
             raise
-        self.__awaitConfig()
         if message[0] != "ff" or message[1] != "01":
             leaveMessage = bytes.fromhex("f0") + self.__macAddr
             self.__sendMessage(leaveMessage)
             raise UnexpectedMessageError
         Connection.globalConfig = [Connection.globalConfig[0],[byteListToIp(message[2])]]
+        self.fDebug("Config gotten! New Config: " + str(Connection.globalConfig))
         return
     
     def joinNetwork(self):
+        self.fDebug("Attempting to join network!")
         try: 
             self.__establishConnection()
         except:
             raise
     
     def __establishConnection(self): 
-        
+        self.fDebug("Establishing Connection!")
         try:
             self.__sendHello()
         except ReceivedRSTError:
@@ -279,41 +306,92 @@ class Connection():
             sys.exit()
         except:
             raise
-        try:
-            self.__awaitConfig()
-            return
-        except:
-            raise
+
+    def __sendConfigToAllPeers(self):
+        self.fDebug("Sending Config to everyone!")
+        id = 1
+        data = (self.__macAddr, ipListToBytes([self.__ownIP]) , id.to_bytes(1,"big"), ipListToBytes(Connection.globalConfig[1]))
+        for target in Connection.globalConfig[1]:
+            try:
+                clientSocket = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+                clientSocket.connect((target, self.__serverPort))
+                newConnection = Connection(clientSocket, self.__parentID,self.__ownIP,self.path,self.__serverPort)
+                message = encode("ff", data)
+                newConnection.sendMessage(message)
+            except Exception as e:
+                raise
+                Connection.globalConfig[1].remove(target)
+                self.__sendConfigToAllPeers()
+        return
     
-    def __receiveHello(self, busy):
+    def __receiveNewSession(self, busy): 
+      
         try:
-            message = self.__recvMessage(self)
+            message, duration = self.__recvMessage()
         except:
             raise
-        (opcode,nodeID,targetIP,power,memory) = decode(message)
-        if opcode != "10":
+        try:
+            (opcode, a,b,c,d) = decode(message)
+        except:
+            (opcode, a,b,c) = decode(message)
+        
+        if opcode == "e0":
+            self.fDebug("Receiving Session Hello!") 
+            (opcode, nodeID, targetIP, power, memory) = decode(message)
+            ipList = byteListToIp(targetIP)
+            Connection.globalConfig[0] = Connection.globalConfig[0] + ipList
+            self.fDebug("Received Hello! New Config: " + str(Connection.globalConfig))
+            self.__sendACK()
+            self.__sendConfigToAllPeers()
+            return(False, None)
+        
+        elif opcode == "ff":
+            self.fDebug("Receiving Event!") 
+            (opcode,targetIP,eventType,data) = decode(message)
+            match eventType:
+                        case "01":
+                            try:
+                                Connection.globalConfig[1] = byteListToIp(data)
+                                self.fDebug("Set new Config: " + str(Connection.globalConfig))
+                                self.__sendACK()
+                            except:
+                                raise
+            return(False, None)
+        
+
+        elif opcode != "10":
             self.__sendRST()
-            raise UnexpectedMessageError
+            raise UnexpectedMessageError(opcode)
         else:
+            (opcode, nodeID, power, memory, nextOpcode) = decode(message)
+            self.fDebug("Receiving new Session!") 
             if busy != 0:
                 self.__sendBusy(busy)
                 self.__sock.close()
                 sys.exit()
-            Connection.globalConfig[0] = Connection.globalConfig[0] + targetIP
-            return 
+            needsValidation = True
+            self.fDebug("Expecting " + str(nextOpcode) + " next")
+            return (needsValidation,nextOpcode)
 
-    def __validateAfterHello(self, announcedMessageType):
-        self.__sendACK()
+    def __validateAfterNewSession(self, announcedMessageType):
+        self.fDebug("Validating after Hello!")
         try:
-            message = decode(self.__recvMessage())
+            message = decode(self.__recvMessage()[0])
         except:
             raise
         if message[0] != announcedMessageType:
-            raise UnexpectedMessageError
+            raise UnexpectedMessageError(announcedMessageType)
+        self.fDebug("Validated after Hello!")
         return message
     
     def requestConfig(self):
-        message = encode("ff",self.__macAddr)
+        #Powerlevel hardcoded
+        memory = int(psutil.virtual_memory().percent)
+        power = 100
+        sessionHello = encode("e0",(self.__macAddr,ipListToBytes([self.__ownIP]),power.to_bytes(1,"big"), memory.to_bytes(1,"big")))
+        self.sendMessage(sessionHello)
+        self.fDebug("Requesting Config!")
+        message = encode("f0",self.__macAddr)
         self.sendMessage(message)
         self.__awaitConfig()
         self.__sock.disconnect()
@@ -321,36 +399,36 @@ class Connection():
         sys.exit()
         
     def handleNewIncoming(self,busy):
-        sessionMessage = self.__receiveHello(busy)
-        message = self.__validateAfterHello(sessionMessage[3])
-        match message[0]:
-            case "20":
-                #Data Message
-                data = self.__recvMessage()
-                dataType = Connection.dataType[message[2]]
-                f = open(Connection.path + str(message[1]) + dataType , "wb")
-                f.write(data)
-                f.close()
-                self.__sock.disconnect()
-                self.__sock.close()
-                sys.exit()
-                           
-            case "30":
-                #Config Request
-                self.__sendConfig()
-                
-            case "ff":
-                #Event Message
-                match message[3]:
-                    case "01":
-                        try:
-                            Connection.globalConfig[1] = byteListToIp(message[4])
-                        except:
-                            raise
+        self.fDebug("New TCP Connection received!")
+        sessionMessage = self.__receiveNewSession(busy)
+        if sessionMessage[0] == True:
+            self.__sendACK()
+            message = self.__validateAfterNewSession(sessionMessage[1])
+            match message[0]:
+                case "20":
+                    #Data Message
+                    self.fDebug("Received data message!")
+                    data = self.__recvMessage()
+                    dataType = Connection.dataType[message[2]]
+                    f = open(Connection.path + str(message[1]) + dataType , "wb")
+                    f.write(data)
+                    f.close()
+                    self.__sock.disconnect()
+                    self.__sock.close()
+                    sys.exit()
+                    return
+                            
+                case "30":
+                    #Config Request
+                    self.fDebug("Received Config request!")
+                    self.__sendConfig()
+                    return
+        else:
+            return
 
-      
+    
 def decode(message):
-    opcode = hex(message[0])
+    opcode = (message[0:1]).hex()
     match opcode: 
         case "02":
             data = struct.unpack("!h",message[1:])
@@ -370,12 +448,12 @@ def decode(message):
             return(opcode,timeslot,nextLevelAddrLen,listOfAddressesNL)
         
         case "10":
-            (nodeID,powerlevel,memory,nextOpcode) = struct.unpack("6ccc",message[1:])
+            (nodeID,powerlevel,memory,nextOpcode) = struct.unpack("6sccc",message[1:10])
             try:
                 checkLength(message,(1,6,1,1,1))
             except:
                 raise
-            return (opcode,nodeID,powerlevel,memory,nextOpcode)
+            return (opcode,nodeID,powerlevel,memory,nextOpcode.hex())
         
         case "20":
             (sourceID,timestamp,dataType,dataSize) = struct.unpack("!6cqci",message[1:21])
@@ -387,37 +465,38 @@ def decode(message):
             return (opcode,sourceID,timestamp,dataType,dataSize,data) 
         
         case "30":
+            print("Gotten")
             try:
                 checkLength(message,(1,6))
             except:
                 raise
-            (nodeID) = struct.unpack("!6c",message[1:])
+            (nodeID) = struct.unpack("!6s",message[1:])
             return(opcode,nodeID)
         
         case "e0":
             try:
-                checkLength(message,(6,4,1,1))
+                checkLength(message,(1,6,4,1,1))
             except:
                 raise
-            (nodeID,targetIP,power,memory) = struct.unpack("!6cicc",message[1:14])
+            (nodeID,targetIP,power,memory) = struct.unpack("!6s4scc",message[1:14])
             return(opcode,nodeID,targetIP,power,memory)
         
         case "f0":
             try:
-                checkLength(message,(6,4,1,1))
+                checkLength(message,(1,6))
             except:
                 raise
-            (nodeID) = struct.unpack("!6c")
+            (nodeID) = struct.unpack("!6c", message[1:])
             return (opcode,nodeID)
         
         case "ff":
-            (nodeID,targetIP,eventType,dataLength) = struct.unpack("!6c4cc",message[1:13])
-            try:
-                checkLength(message,(1,6,4,1,dataLength))
-            except:
-                raise
-            return (opcode,targetIP,eventType,message[2:])
-
+            (nodeID,targetIP,eventType) = struct.unpack("!6s4sc",message[1:12])
+            
+            return (opcode,targetIP,eventType.hex(),message[12:])
+        
+        case _:
+            raise UnexpectedMessageError(opcode)
+            
 def encode(opcode,data):
     bOpcode = bytes.fromhex(opcode)
     match opcode:
@@ -430,23 +509,23 @@ def encode(opcode,data):
             return(header + nlaB)
         case "10":
             (nodeID,powerlevel,memory,nextOpcode) = data
-            return(struct.pack("!c6ccc",bOpcode, powerlevel, memory, nextOpcode))
+            return(struct.pack("!c6scc",bOpcode, powerlevel, memory, nextOpcode))
         case "20":
             (nodeID,timestamp,dataType,dataLen,sounddata) = data
-            return(struct.pack("!c6cqci",bOpcode,nodeID,timestamp,dataType,dataLen) + sounddata)
+            return(struct.pack("!c6sqci",bOpcode,nodeID,timestamp,dataType,dataLen) + sounddata)
         case "30":
             return(struct.pack("!cc", bOpcode, data))
         case "e0":
             (nodeID,ownIP,powerlevel,memory) = data
-            return(struct.pack("!6c4ccc"),bOpcode,nodeID,ownIP,powerlevel,memory)
+            return(struct.pack("!c6s4scc",bOpcode,nodeID,ownIP,powerlevel,memory))
         case "f0":
-            return(struct.pack("!6c",data))
+            return(struct.pack("!c6s",bOpcode,data))
         case "ff":
             try:
-                (nodeID, eventID, eventType, additionals) = data
+                (nodeID, ownIP, eventType, additionals) = data
             except:
-                (nodeID, eventID, eventType) = data
-            return((struct.pack("!c6cic"), bOpcode, nodeID, eventID, eventType) + additionals)
+                (nodeID, ownIP, eventType) = data
+            return(struct.pack("!c6s4sc", bOpcode, nodeID, ownIP, eventType) + additionals)
        
         
             

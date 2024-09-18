@@ -4,36 +4,40 @@ def passiveIncomingListener(args):
     
     return
 
-def upperConfigPoll(args, parentPID, intervall):
+def upperConfigPoll(args, controlPID, intervall):
     try:
-        while parentPID.status()== psutil.STATUS_ZOMBIE:
+        parentProc = psutil.Process(controlPID)
+        print("Polling Config")
+        while parentProc.status()!= psutil.STATUS_ZOMBIE:
             clientSocket = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
-            connSocket = clientSocket.connect((random.choice(messages.Connection.globalConfig[0]),args.T))
-            connection = messages.Connection(connSocket, controlPID, args.A, args.D)
+            clientSocket.connect((random.choice(messages.Connection.globalConfig[0]),args.T))
+            print(clientSocket)
+            connection = messages.Connection(clientSocket, controlPID, args.A, args.D, args.T)
             connection.requestConfig()
             time.sleep(intervall)
     except:
         raise
         
-def connectToNegotiator(args, parentPID):
+def connectToNegotiator(args, controlPID):
     try:
         clientSocket = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
-        connSocket = clientSocket.connect(args.E,args.T)
-        connection = messages.Connection(connSocket, controlPID, args.A, args.D)
+        clientSocket.connect((args.E,args.T))
+        connection = messages.Connection(clientSocket, controlPID, args.A, args.D, args.T)
         connection.joinNetwork()
     except:
         raise
 
 def handleIncoming(args, serverSocket):
+    print("Handling incoming on " + str(args.P))
     while True:
         try:
             serverSocket.listen()
-            connSocket = serverSocket.accept()
-            connection = messages.Connection(connSocket, controlPID, args.A, args.D)
-            connection.handleNewIncoming()
+            connSocket,addr = serverSocket.accept()
+            print("Listen returns new connected socket")
+            connection = messages.Connection(connSocket, controlPID, args.A, args.D, args.T)
+            connection.handleNewIncoming(0)
         except:
             raise
-        return
 
 if __name__ == "__main__":
     controlPID = os.getpid()
@@ -53,18 +57,30 @@ if __name__ == "__main__":
     print("Starting...")
     #self, connsock, upperIP, parentProcess, ownIP, path
     serverSocket = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+    serverSocket.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
     serverSocket.bind((args.A,args.P))
+    messages.Connection.globalConfig[1] = [args.A]
+    #Upper -> First device in layer
     if args.U != None:
+        print("Is first device in layer")
         messages.Connection.globalConfig[0] = [args.U]
-        
+        t2 = threading.Thread(target=upperConfigPoll,args=(args,controlPID,300))
+        t2.setDaemon(True)
+        t2.start()
+    #Peer -> Get Config from Peer
     elif args.E != None:
+        print("Establishing connection via peer")
         t1 = threading.Thread(target=connectToNegotiator,args=(args,controlPID))
+        t2 = threading.Thread(target=upperConfigPoll,args=(args,controlPID,300))
+        t1.setDaemon(True)
+        t2.setDaemon(True)
+        t1.start()
+        t2.start()
+    #Runs as server
     elif args.S:
         print("Running as main Server")
     else:
         raise AttributeError
-    
-    t2 = threading.Thread(target=upperConfigPoll,args=(args,300))
     handleIncoming(args,serverSocket)
     
     
