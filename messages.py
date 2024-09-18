@@ -456,7 +456,7 @@ def decode(message):
             return (opcode,nodeID,powerlevel,memory,nextOpcode.hex())
         
         case "20":
-            (sourceID,timestamp,dataType,dataSize) = struct.unpack("!6cqci",message[1:21])
+            (sourceID,timestamp,dataType,dataSize) = struct.unpack("!6sqci",message[1:20])
             try:
                 checkLength(message,(1,6,8,1,4,dataSize))
             except:
