@@ -223,6 +223,20 @@ class Connection():
         except Exception:
             raise
  
+    def __sendConfigRequest(self, message, tries):
+        if tries == 0:
+            raise ReceivedRSTError
+        
+        self.__sock.send(self.__wrapSize(message))
+        try:
+            self.__awaitConfig()
+        except ReceivedRSTError:
+            self.__sendMessage(message,tries-1)
+        except ReceivedBusyError:
+            raise
+        except Exception:
+            raise
+ 
     def __sendResponse(self, message):
         
         self.__sock.send(self.__wrapSize(message))
@@ -260,7 +274,7 @@ class Connection():
                     self.__sock.close()
                     sys.exit()
                 data = self.__sock.recv(256000)
-                self.fDebug("Received message part: " + str(data))
+                self.fDebug("Received message part: " +data.hex())
                 buffer = buffer + data
             self.fDebug("Received message of size " + str(size))
             return buffer, time.time()-time1
@@ -279,15 +293,18 @@ class Connection():
     def __awaitConfig(self):
         self.fDebug("Awaiting Config!")
         try:
-            message = decode(self.__recvMessage())
+            message = decode(self.__recvMessage()[0])
         except:
             raise
-        if message[0] != "ff" or message[1] != "01":
+        if message[0] != "03":
+            self.fDebug("Leaving: Config answer was not of ff or 01")
             leaveMessage = bytes.fromhex("f0") + self.__macAddr
             self.__sendMessage(leaveMessage)
             raise UnexpectedMessageError
-        Connection.globalConfig = [Connection.globalConfig[0],[byteListToIp(message[2])]]
+        
+        Connection.globalConfig = [Connection.globalConfig[0],[byteListToIp(message[3])]]
         self.fDebug("Config gotten! New Config: " + str(Connection.globalConfig))
+        self.__sendACK()
         return
     
     def joinNetwork(self):
@@ -312,16 +329,16 @@ class Connection():
         id = 1
         data = (self.__macAddr, ipListToBytes([self.__ownIP]) , id.to_bytes(1,"big"), ipListToBytes(Connection.globalConfig[1]))
         for target in Connection.globalConfig[1]:
-            try:
-                clientSocket = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
-                clientSocket.connect((target, self.__serverPort))
-                newConnection = Connection(clientSocket, self.__parentID,self.__ownIP,self.path,self.__serverPort)
-                message = encode("ff", data)
-                newConnection.sendMessage(message)
-            except Exception as e:
-                raise
-                Connection.globalConfig[1].remove(target)
-                self.__sendConfigToAllPeers()
+            if target != self.__ownIP:
+                try:
+                    clientSocket = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+                    clientSocket.connect((target, self.__serverPort))
+                    newConnection = Connection(clientSocket, self.__parentID,self.__ownIP,self.path,self.__serverPort)
+                    message = encode("ff", data)
+                    newConnection.sendMessage(message)
+                except Exception as e:
+                    Connection.globalConfig[1].remove(target)
+                    self.__sendConfigToAllPeers()
         return
     
     def __receiveNewSession(self, busy): 
@@ -388,13 +405,12 @@ class Connection():
         #Powerlevel hardcoded
         memory = int(psutil.virtual_memory().percent)
         power = 100
-        sessionHello = encode("e0",(self.__macAddr,ipListToBytes([self.__ownIP]),power.to_bytes(1,"big"), memory.to_bytes(1,"big")))
+        sessionHello = encode("10",(self.__macAddr,power.to_bytes(1,"big"), memory.to_bytes(1,"big"),bytes.fromhex("30")))
         self.sendMessage(sessionHello)
         self.fDebug("Requesting Config!")
-        message = encode("f0",self.__macAddr)
-        self.sendMessage(message)
-        self.__awaitConfig()
-        self.__sock.disconnect()
+        message = encode("30",self.__macAddr)
+        self.__sendConfigRequest(message, 3)
+        self.__sock.shutdown(2)
         self.__sock.close()
         sys.exit()
         
@@ -424,9 +440,9 @@ class Connection():
                     self.__sendConfig()
                     return
         else:
-            return
 
-    
+            return
+   
 def decode(message):
     opcode = (message[0:1]).hex()
     match opcode: 
@@ -439,10 +455,11 @@ def decode(message):
             return (opcode,data)
         
         case "03":
-            (timeslot,nextLevelAddrLen,ownLevelAddrLen) = struct.unpack("!qhh",message[1:14])
-            listOfAddressesNL = struct.iter_unpack("4B",message[13:13+nextLevelAddrLen])
+            (timeslot,nextLevelAddrLen) = struct.unpack("!qh",message[1:11])
+            print(nextLevelAddrLen)
+            listOfAddressesNL = message[11:]
             try:
-                checkLength(message,(1,8,2,nextLevelAddrLen))
+                checkLength(message,(1,8,2,nextLevelAddrLen*4))
             except:
                 raise
             return(opcode,timeslot,nextLevelAddrLen,listOfAddressesNL)
@@ -465,7 +482,6 @@ def decode(message):
             return (opcode,sourceID,timestamp,dataType,dataSize,data) 
         
         case "30":
-            print("Gotten")
             try:
                 checkLength(message,(1,6))
             except:
@@ -509,12 +525,12 @@ def encode(opcode,data):
             return(header + nlaB)
         case "10":
             (nodeID,powerlevel,memory,nextOpcode) = data
-            return(struct.pack("!c6scc",bOpcode, powerlevel, memory, nextOpcode))
+            return(struct.pack("!c6sccc",bOpcode, nodeID, powerlevel, memory, nextOpcode))
         case "20":
             (nodeID,timestamp,dataType,dataLen,sounddata) = data
             return(struct.pack("!c6sqci",bOpcode,nodeID,timestamp,dataType,dataLen) + sounddata)
         case "30":
-            return(struct.pack("!cc", bOpcode, data))
+            return(struct.pack("!c6s", bOpcode, data))
         case "e0":
             (nodeID,ownIP,powerlevel,memory) = data
             return(struct.pack("!c6s4scc",bOpcode,nodeID,ownIP,powerlevel,memory))
@@ -525,9 +541,7 @@ def encode(opcode,data):
                 (nodeID, ownIP, eventType, additionals) = data
             except:
                 (nodeID, ownIP, eventType) = data
-            return(struct.pack("!c6s4sc", bOpcode, nodeID, ownIP, eventType) + additionals)
-       
-        
+            return(struct.pack("!c6s4sc", bOpcode, nodeID, ownIP, eventType) + additionals)        
             
 if __name__ == "__main__":
     addrs = ["192.168.178.32","192.168.178.33","192.168.178.34"]
