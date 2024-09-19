@@ -1,20 +1,13 @@
 import messages, threading, socket, os, argparse, psutil, random, time
 
-def passiveIncomingListener(args):
-    
-    return
-
-def upperConfigPoll(args, controlPID, intervall):
+def upperConfigPoll(args, controlPID):
     try:
-        parentProc = psutil.Process(controlPID)
         print("Polling Config")
-        while parentProc.status()!= psutil.STATUS_ZOMBIE:
-            clientSocket = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
-            clientSocket.connect((random.choice(messages.Connection.globalConfig[0]),args.T))
-            print(clientSocket)
-            connection = messages.Connection(clientSocket, controlPID, args.A, args.D, args.T)
-            connection.requestConfig()
-            time.sleep(intervall)
+        clientSocket = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+        clientSocket.connect((random.choice(messages.Connection.globalConfig[0]),args.T))
+        print(clientSocket)
+        connection = messages.Connection(clientSocket, controlPID, args.A, args.D, args.T)
+        connection.requestConfig()
     except:
         raise
         
@@ -39,6 +32,12 @@ def handleIncoming(args, serverSocket):
         except:
             raise
 
+def pollOnIntervall(args, controlPID, intervall):
+    parentProc = psutil.Process(controlPID)
+    while parentProc.status()!= psutil.STATUS_ZOMBIE:
+        upperConfigPoll(args, controlPID)
+        time.sleep(intervall)
+        
 if __name__ == "__main__":
     controlPID = os.getpid()
     parser = argparse.ArgumentParser(description= "Data Aggregator for Wired/Wireless ESP Audio Sensors")
@@ -64,24 +63,49 @@ if __name__ == "__main__":
     if args.U != None:
         print("Is first device in layer")
         messages.Connection.globalConfig[0] = [args.U]
-        t2 = threading.Thread(target=upperConfigPoll,args=(args,controlPID,300))
+        t2 = threading.Thread(target=upperConfigPoll,args=(args,controlPID))
+        t3 = threading.Thread(target=handleIncoming,args=(args,serverSocket))
         t2.setDaemon(True)
+        t3.start()
         t2.start()
+        t2.join()
     #Peer -> Get Config from Peer
     elif args.E != None:
         print("Establishing connection via peer")
         t1 = threading.Thread(target=connectToNegotiator,args=(args,controlPID))
-        t2 = threading.Thread(target=upperConfigPoll,args=(args,controlPID,300))
+        t2 = threading.Thread(target=upperConfigPoll,args=(args,controlPID))
+        t3 = threading.Thread(target=handleIncoming,args=(args,serverSocket))
         t1.setDaemon(True)
         t2.setDaemon(True)
         t1.start()
         t2.start()
+        t3.start()
+        t1.join()
+        t2.join()
     #Runs as server
     elif args.S:
         print("Running as main Server")
+        messages.Connection.path = args.D
+        t3 = threading.Thread(target=handleIncoming,args=(args,serverSocket))
+        t3.start()
+        t3.join()
     else:
         raise AttributeError
-    handleIncoming(args,serverSocket)
-    
+    print("Connection Done, starting poll on intervall")
+    if not args.S:
+        t2 = threading.Thread(target=pollOnIntervall,args=(args,controlPID,300))
+        files = os.listdir("/home/skon/Desktop/Unikram/praktikum/sendfiles")
+        for file in files:
+            clientSocket = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+            clientSocket.connect((random.choice(messages.Connection.globalConfig[0]),args.T))
+            connection = messages.Connection(clientSocket, controlPID, args.A, args.D, args.T)
+            connection.createSessionMessage("20")
+            f = open("/home/skon/Desktop/Unikram/praktikum/sendfiles/" + file,"rb")
+            data = f.read()
+            dataType = bytes.fromhex("01")
+            timestamp = int(time.time())
+            connection.packAndSendData(timestamp,dataType,data)
+            f.close()
+
     
     

@@ -137,7 +137,8 @@ class Connection():
     debug = True
     dataTypes = {
         "01": ".wav",
-        "02": ".csv"
+        "02": ".csv",
+        "03": ".txt"
      }
     __serverPort = 5001
     
@@ -203,6 +204,24 @@ class Connection():
                     self.fDebug("Received ACK!")
                     return
 
+    def createSessionMessage(self, opcode):
+        #hardcoding power as 100%
+        power = 100
+        memory = int(psutil.virtual_memory().percent)
+        try:
+            sessionMessage = encode("10",(self.__macAddr,power.to_bytes(1,"big"), memory.to_bytes(1,"big"),bytes.fromhex(opcode)))
+            self.sendMessage(sessionMessage)
+            return
+        except:
+            raise
+
+    def packAndSendData(self, timestamp, dataType, data):
+        #hardcoding power as 100%
+        power = 100
+        dataLen = len(data)
+        message = encode("20",(self.__macAddr,timestamp,dataType,dataLen,data))
+        self.sendMessage(message)
+    
     def sendMessage(self,encodedData):
         try:
             self.__sendMessage(encodedData,3)
@@ -262,6 +281,7 @@ class Connection():
             raise
 
     def __recvMessage(self):
+        self.fDebug("Trying to receive message")
         time1 = time.time()
         try: 
             size = int.from_bytes(self.__sock.recv(4),"big")
@@ -274,7 +294,7 @@ class Connection():
                     self.__sock.close()
                     sys.exit()
                 data = self.__sock.recv(256000)
-                self.fDebug("Received message part: " +data.hex())
+                #self.fDebug("Received message part: " + data.hex())
                 buffer = buffer + data
             self.fDebug("Received message of size " + str(size))
             return buffer, time.time()-time1
@@ -423,13 +443,14 @@ class Connection():
             match message[0]:
                 case "20":
                     #Data Message
+                    (opcode,sourceID,timestamp,dataType,dataSize,data) = message
                     self.fDebug("Received data message!")
-                    data = self.__recvMessage()
-                    dataType = Connection.dataType[message[2]]
-                    f = open(Connection.path + str(message[1]) + dataType , "wb")
+                    dataType = Connection.dataTypes[dataType]
+                    self.fDebug("Received message has type " + dataType)
+                    f = open(Connection.path + str(timestamp) + dataType , "wb")
                     f.write(data)
                     f.close()
-                    self.__sock.disconnect()
+                    self.__sendACK()
                     self.__sock.close()
                     sys.exit()
                     return
@@ -456,7 +477,7 @@ def decode(message):
         
         case "03":
             (timeslot,nextLevelAddrLen) = struct.unpack("!qh",message[1:11])
-            print(nextLevelAddrLen)
+    
             listOfAddressesNL = message[11:]
             try:
                 checkLength(message,(1,8,2,nextLevelAddrLen*4))
@@ -478,8 +499,8 @@ def decode(message):
                 checkLength(message,(1,6,8,1,4,dataSize))
             except:
                 raise
-            data = message[21:]
-            return (opcode,sourceID,timestamp,dataType,dataSize,data) 
+            data = message[20:]
+            return (opcode,sourceID,timestamp,dataType.hex(),dataSize,data) 
         
         case "30":
             try:
@@ -528,6 +549,7 @@ def encode(opcode,data):
             return(struct.pack("!c6sccc",bOpcode, nodeID, powerlevel, memory, nextOpcode))
         case "20":
             (nodeID,timestamp,dataType,dataLen,sounddata) = data
+           
             return(struct.pack("!c6sqci",bOpcode,nodeID,timestamp,dataType,dataLen) + sounddata)
         case "30":
             return(struct.pack("!c6s", bOpcode, data))
