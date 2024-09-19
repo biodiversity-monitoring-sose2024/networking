@@ -20,9 +20,11 @@ def connectToNegotiator(args, controlPID):
     except:
         raise
 
+
 def handleIncoming(args, serverSocket):
     print("Handling incoming on " + str(args.P))
     while True:
+        print("Loop")
         try:
             serverSocket.listen()
             connSocket,addr = serverSocket.accept()
@@ -42,16 +44,22 @@ if __name__ == "__main__":
     controlPID = os.getpid()
     parser = argparse.ArgumentParser(description= "Data Aggregator for Wired/Wireless ESP Audio Sensors")
     
-    parser.add_argument("-D", metavar= "Destination Files", action= "store", required= True, help= "Destination for recieved files")
-    parser.add_argument('-A', metavar= "IP Address", action= "store", required= True, help = "IP-Adress to be used by this device")
-    parser.add_argument("-I", metavar= "Input Source", action= "store", choices=["serial","wifi"], default= "wifi", help= "Input source. Supports 'serial.' and 'wifi'.")
-    parser.add_argument('-P', metavar= "Port", action= "store", type = int, default = 5001, required= False, help = "Port to open up TCP server on. Defaults to port 5001")
-    parser.add_argument('-U', metavar= "Upper", action= "store", required= False, default = None, help = "Initial IP to connect to and get config from, in case the device is the first one on its peer layer")
-    parser.add_argument('-T', metavar= "Target Port", action= "store", type = int, default = 5001, required= False, help = "Port to connect to upper instance, defaults to 5001")
-    parser.add_argument('-S', metavar= "Is Server", action= "store", type = bool, default = False, required= False, help = "Indicates if device is  main server")
-    parser.add_argument('-E', metavar= "peer address", action= "store", required= False, default = None, help = "Address of the negotiator peer")
+    # Required arguments
+    parser.add_argument("-D", metavar="Destination Files", action="store", required=True, help="Destination for received files")
+    parser.add_argument("-A", metavar="IP Address", action="store", required=True, help="IP address to be used by this device")
+    parser.add_argument("-P", metavar="Port", action="store", type=int, default=5001, required=False, help="Port to open up TCP server on. Defaults to port 5001")
+    parser.add_argument("-T", metavar="Target Port", action="store", type=int, default=5001, required=False, help="Port to connect to upper instance, defaults to 5001")
+    parser.add_argument("-I", metavar="Input", action="store", default="./", required=False, help="Path to find data to send in")
+
     
+    # Mutually exclusive options
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("-S", action="store_true", help="Indicates if device is main server")
+    group.add_argument("-U", metavar="Upper", action="store", help="Initial IP to connect to and get config from, in case the device is the first one on its peer layer")
+    group.add_argument("-E", metavar="peer address", action="store", help="Address of the negotiator peer")
+
     args = parser.parse_args()
+    
     
     print("Starting...")
     #self, connsock, upperIP, parentProcess, ownIP, path
@@ -86,26 +94,35 @@ if __name__ == "__main__":
     elif args.S:
         print("Running as main Server")
         messages.Connection.path = args.D
-        t3 = threading.Thread(target=handleIncoming,args=(args,serverSocket))
-        t3.start()
-        t3.join()
+        handleIncoming(args,serverSocket)
+        
     else:
         raise AttributeError
     print("Connection Done, starting poll on intervall")
     if not args.S:
-        t2 = threading.Thread(target=pollOnIntervall,args=(args,controlPID,300))
-        files = os.listdir("/home/skon/Desktop/Unikram/praktikum/sendfiles")
-        for file in files:
-            clientSocket = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
-            clientSocket.connect((random.choice(messages.Connection.globalConfig[0]),args.T))
-            connection = messages.Connection(clientSocket, controlPID, args.A, args.D, args.T)
-            connection.createSessionMessage("20")
-            f = open("/home/skon/Desktop/Unikram/praktikum/sendfiles/" + file,"rb")
-            data = f.read()
-            dataType = bytes.fromhex("01")
-            timestamp = int(time.time())
-            connection.packAndSendData(timestamp,dataType,data)
-            f.close()
+        while True:
+            t2 = threading.Thread(target=pollOnIntervall,args=(args,controlPID,300))
+            files = os.listdir(args.I)
+            if len(files) != 0:
+                for file in files:
+                    clientSocket = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+                    clientSocket.connect((random.choice(messages.Connection.globalConfig[0]),args.T))
+                    connection = messages.Connection(clientSocket, controlPID, args.A, args.D, args.T)
+                    connection.createSessionMessage("20")
+                    f = open(args.I + "/" + file,"rb")
+                    data = f.read()
+                    if file.endsWith(".wav"):
+                        dataType = bytes.fromhex("01")
+                    elif file.endswith(".csv"):
+                        dataType = bytes.fromhex("02")
+                    else:
+                        dataType = bytes.fromhex("03")
+                    sourcemac = bytes.fromhex(file[0:6])    
+                    timestamp = file[6:14]
+                    connection.packAndSendData(sourcemac,timestamp,dataType,data)
+                    f.close()
+                    os.remove(f)
+            time.sleep(15)
 
     
     

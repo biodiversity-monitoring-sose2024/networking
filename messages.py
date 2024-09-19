@@ -215,11 +215,11 @@ class Connection():
         except:
             raise
 
-    def packAndSendData(self, timestamp, dataType, data):
+    def packAndSendData(self, sourcemac, timestamp, dataType, data):
         #hardcoding power as 100%
         power = 100
         dataLen = len(data)
-        message = encode("20",(self.__macAddr,timestamp,dataType,dataLen,data))
+        message = encode("20",(sourcemac,timestamp,dataType,dataLen,data))
         self.sendMessage(message)
     
     def sendMessage(self,encodedData):
@@ -447,12 +447,11 @@ class Connection():
                     self.fDebug("Received data message!")
                     dataType = Connection.dataTypes[dataType]
                     self.fDebug("Received message has type " + dataType)
-                    f = open(Connection.path + str(timestamp) + dataType , "wb")
+                    f = open(Connection.path + "/" + sourceID.hex() + str(timestamp) + dataType , "wb")
                     f.write(data)
                     f.close()
                     self.__sendACK()
                     self.__sock.close()
-                    sys.exit()
                     return
                             
                 case "30":
