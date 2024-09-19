@@ -1,4 +1,4 @@
-import struct, uuid, sys, psutil, time, socket
+import struct, uuid, sys, psutil, time, socket, os
 
 class ReceivedRSTMessageError(Exception):
     pass
@@ -447,7 +447,11 @@ class Connection():
                     self.fDebug("Received data message!")
                     dataType = Connection.dataTypes[dataType]
                     self.fDebug("Received message has type " + dataType)
-                    f = open(Connection.path + "/" + sourceID.hex() + str(timestamp) + dataType , "wb")
+                    try:
+                        f = open(Connection.path + "/" + sourceID.hex()+ "/" + str(timestamp) + dataType , "wb")
+                    except FileNotFoundError:
+                        os.mkdir(Connection.path+ "/" + sourceID.hex())
+                        f = open(Connection.path + "/" + sourceID.hex()+ "/" + str(timestamp) + dataType , "wb")
                     f.write(data)
                     f.close()
                     self.__sendACK()
@@ -467,7 +471,7 @@ def decode(message):
     opcode = (message[0:1]).hex()
     match opcode: 
         case "02":
-            data = struct.unpack("!h",message[1:])
+            data = struct.unpack("!H",message[1:])
             try:
                 checkLength(message,(1,2))
             except:
@@ -475,7 +479,7 @@ def decode(message):
             return (opcode,data)
         
         case "03":
-            (timeslot,nextLevelAddrLen) = struct.unpack("!qh",message[1:11])
+            (timeslot,nextLevelAddrLen) = struct.unpack("!QH",message[1:11])
     
             listOfAddressesNL = message[11:]
             try:
@@ -493,7 +497,7 @@ def decode(message):
             return (opcode,nodeID,powerlevel,memory,nextOpcode.hex())
         
         case "20":
-            (sourceID,timestamp,dataType,dataSize) = struct.unpack("!6sqci",message[1:20])
+            (sourceID,timestamp,dataType,dataSize) = struct.unpack("!6sQcI",message[1:20])
             try:
                 checkLength(message,(1,6,8,1,4,dataSize))
             except:
@@ -537,10 +541,10 @@ def encode(opcode,data):
     bOpcode = bytes.fromhex(opcode)
     match opcode:
         case "02":
-            return(struct.pack("!ch",bOpcode,data[1]))
+            return(struct.pack("!cH",bOpcode,data[1]))
         case "03":
             (timeslot,nlal,nla) = data
-            header = struct.pack("!cqh",bOpcode,timeslot,nlal)
+            header = struct.pack("!cQH",bOpcode,timeslot,nlal)
             nlaB = ipListToBytes(nla)
             return(header + nlaB)
         case "10":
@@ -549,7 +553,7 @@ def encode(opcode,data):
         case "20":
             (nodeID,timestamp,dataType,dataLen,sounddata) = data
            
-            return(struct.pack("!c6sqci",bOpcode,nodeID,timestamp,dataType,dataLen) + sounddata)
+            return(struct.pack("!c6sQcI",bOpcode,nodeID,timestamp,dataType,dataLen) + sounddata)
         case "30":
             return(struct.pack("!c6s", bOpcode, data))
         case "e0":
