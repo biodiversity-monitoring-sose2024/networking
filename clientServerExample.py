@@ -1,5 +1,7 @@
 import messages, threading, socket, os, argparse, psutil, random, time
 
+#Testkommentar
+
 def upperConfigPoll(args, controlPID):
     try:
         print("Polling Config")
@@ -86,9 +88,9 @@ if __name__ == "__main__":
         t1.setDaemon(True)
         t2.setDaemon(True)
         t1.start()
+        t1.join()
         t2.start()
         t3.start()
-        t1.join()
         t2.join()
     #Runs as server
     elif args.S:
@@ -124,5 +126,4 @@ if __name__ == "__main__":
                     os.remove(f)
             time.sleep(15)
 
-    
-    
+

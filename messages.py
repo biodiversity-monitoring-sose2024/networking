@@ -347,7 +347,7 @@ class Connection():
     def __sendConfigToAllPeers(self):
         self.fDebug("Sending Config to everyone!")
         id = 1
-        data = (self.__macAddr, ipListToBytes([self.__ownIP]) , id.to_bytes(1,"big"), ipListToBytes(Connection.globalConfig[1]))
+        data = (self.__macAddr, ipListToBytes([self.__ownIP]) , id.to_bytes(1,"big"), self.__packOwnConfig)
         for target in Connection.globalConfig[1]:
             if target != self.__ownIP:
                 try:
@@ -360,7 +360,18 @@ class Connection():
                     Connection.globalConfig[1].remove(target)
                     self.__sendConfigToAllPeers()
         return
+
+    def __packOwnConfig(self):
+        upperConfigLength = struct.pack("!c", len(Connection.globalConfig[0]))
+        message = upperConfigLength + ipListToBytes(Connection.globalConfig[0])+ipListToBytes(Connection.globalConfig[1])
+        return message
     
+    def __unpackConfig(self, config):
+        upperConfigLength = struct.unpack("!c", config[0])
+        upperConfig = byteListToIp(config[1:1+upperConfigLength])
+        peerConfig = byteListToIp(config[1+upperConfigLength:])
+        Connection.globalConfig=[upperConfig,peerConfig]
+        
     def __receiveNewSession(self, busy): 
       
         try:
@@ -388,7 +399,7 @@ class Connection():
             match eventType:
                         case "01":
                             try:
-                                Connection.globalConfig[1] = byteListToIp(data)
+                                self.__unpackConfig(data)
                                 self.fDebug("Set new Config: " + str(Connection.globalConfig))
                                 self.__sendACK()
                             except:
@@ -566,6 +577,7 @@ def encode(opcode,data):
                 (nodeID, ownIP, eventType, additionals) = data
             except:
                 (nodeID, ownIP, eventType) = data
+                
             return(struct.pack("!c6s4sc", bOpcode, nodeID, ownIP, eventType) + additionals)        
             
 if __name__ == "__main__":
