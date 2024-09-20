@@ -322,7 +322,7 @@ class Connection():
             self.__sendMessage(leaveMessage)
             raise UnexpectedMessageError
         
-        Connection.globalConfig = [Connection.globalConfig[0],[byteListToIp(message[3])]]
+        Connection.globalConfig = [Connection.globalConfig[0],byteListToIp(message[3])]
         self.fDebug("Config gotten! New Config: " + str(Connection.globalConfig))
         self.__sendACK()
         return
@@ -448,7 +448,7 @@ class Connection():
                     dataType = Connection.dataTypes[dataType]
                     self.fDebug("Received message has type " + dataType)
                     try:
-                        f = open(Connection.path + "/" + sourceID.hex()+ "/" + str(timestamp) + dataType , "wb")
+                        f = open(Connection.path + "/" + sourceID.hex()+ "/" + str(timestamp) + dataType , "ab")
                     except FileNotFoundError:
                         os.mkdir(Connection.path+ "/" + sourceID.hex())
                         f = open(Connection.path + "/" + sourceID.hex()+ "/" + str(timestamp) + dataType , "wb")
