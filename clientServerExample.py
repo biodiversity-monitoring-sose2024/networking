@@ -36,7 +36,9 @@ def handleIncoming(args, serverSocket, parentPID):
             print("Listen returns new connected socket")
             connection = messages.Connection(connSocket, controlPID, args.A, args.D, args.T)
             connection.handleNewIncoming(0)
-        except:
+        except ConnectionAbortedError:
+            print("Connection closed by peer!")
+        except: 
             raise
 
 def pollOnIntervall(args, controlPID, intervall):

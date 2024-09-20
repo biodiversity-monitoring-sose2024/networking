@@ -557,6 +557,9 @@ def decode(message):
             
             return (opcode,targetIP,eventType.hex(),message[12:])
         
+        case "":
+            print("Connection closed by peer!")
+            raise ConnectionAbortedError
         case _:
             raise UnexpectedMessageError(opcode)
             
