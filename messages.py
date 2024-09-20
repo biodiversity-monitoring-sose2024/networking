@@ -130,9 +130,14 @@ def byteListToIp(ipBytearray):
         }"""
 
 
+class Config():
+        upper = []
+        peer = []
+
 class Connection():
     #0 = upper, 1 = peer
-    globalConfig = [[],[]]
+    
+    config = Config()
     path = "home/"
     debug = True
     dataTypes = {
@@ -144,7 +149,6 @@ class Connection():
     
     """def __init__(self, connsock, upperIP, parentProcess, ownIP, path) :
         self.__sock = connsock
-        Connection.globalConfig = [[upperIP],[]]
         self.__parentProcess = parentProcess
         self.__macAddr = hex(uuid.getnode())
         self.__ownIP = ownIP
@@ -265,7 +269,7 @@ class Connection():
             raise
                  
     def __sendConfig(self):
-        self.__sendResponse(encode("03",(0, len(Connection.globalConfig[1]),Connection.globalConfig[1])))
+        self.__sendResponse(encode("03",(0, len(self.config.peer),self.config.peer)))
         self.fDebug("Config sent!")
 
     def __sendHello(self):
@@ -317,13 +321,13 @@ class Connection():
         except:
             raise
         if message[0] != "03":
-            self.fDebug("Leaving: Config answer was not of ff or 01")
+            self.fDebug("Leaving: Config answer was not of 03")
             leaveMessage = bytes.fromhex("f0") + self.__macAddr
             self.__sendMessage(leaveMessage)
             raise UnexpectedMessageError
-        
-        Connection.globalConfig = [Connection.globalConfig[0],byteListToIp(message[3])]
-        self.fDebug("Config gotten! New Config: " + str(Connection.globalConfig))
+        (opcode,timeslot,nextLevelAddrLen,listOfAddressesNL) = message
+        self.config.upper = byteListToIp(listOfAddressesNL)
+        self.fDebug("Config gotten! New Config: " + str(Connection.config))
         self.__sendACK()
         return
     
@@ -347,8 +351,9 @@ class Connection():
     def __sendConfigToAllPeers(self):
         self.fDebug("Sending Config to everyone!")
         id = 1
-        data = (self.__macAddr, ipListToBytes([self.__ownIP]) , id.to_bytes(1,"big"), self.__packOwnConfig)
-        for target in Connection.globalConfig[1]:
+        ownConfig = self.__packOwnConfig()
+        data = (self.__macAddr, ipListToBytes([self.__ownIP]) , id.to_bytes(1,"big"), ownConfig)
+        for target in self.config.peer:
             if target != self.__ownIP:
                 try:
                     clientSocket = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
@@ -357,20 +362,25 @@ class Connection():
                     message = encode("ff", data)
                     newConnection.sendMessage(message)
                 except Exception as e:
-                    Connection.globalConfig[1].remove(target)
+                    self.config.peer.remove(target)
                     self.__sendConfigToAllPeers()
         return
 
     def __packOwnConfig(self):
-        upperConfigLength = struct.pack("!c", len(Connection.globalConfig[0]))
-        message = upperConfigLength + ipListToBytes(Connection.globalConfig[0])+ipListToBytes(Connection.globalConfig[1])
+        ipUpperBytes = ipListToBytes(self.config.upper)
+        upperConfigLength = struct.pack("!B", len(ipUpperBytes) )
+        message = upperConfigLength + ipUpperBytes + ipListToBytes(self.config.peer)
         return message
     
     def __unpackConfig(self, config):
-        upperConfigLength = struct.unpack("!c", config[0])
+        print("Config: " + str(config))
+        upperConfigLength = struct.unpack("!B", config[0:1])[0]
+        print("Upper Config Length: " + str(upperConfigLength))
         upperConfig = byteListToIp(config[1:1+upperConfigLength])
         peerConfig = byteListToIp(config[1+upperConfigLength:])
-        Connection.globalConfig=[upperConfig,peerConfig]
+        self.fDebug("Setting new config to: " + str([upperConfig,peerConfig]))
+        Connection.config.upper = upperConfig
+        Connection.config.peer = peerConfig
         
     def __receiveNewSession(self, busy): 
       
@@ -384,11 +394,11 @@ class Connection():
             (opcode, a,b,c) = decode(message)
         
         if opcode == "e0":
-            self.fDebug("Receiving Session Hello!") 
+            self.fDebug("Receiving New Device Hello!") 
             (opcode, nodeID, targetIP, power, memory) = decode(message)
             ipList = byteListToIp(targetIP)
-            Connection.globalConfig[0] = Connection.globalConfig[0] + ipList
-            self.fDebug("Received Hello! New Config: " + str(Connection.globalConfig))
+            self.config.peer = self.config.peer + ipList
+            self.fDebug("Received Hello! New Config: \n" + "Uppers: " + str(Connection.config.upper) +"\n" + "Peers: " + str(Connection.config.peer))
             self.__sendACK()
             self.__sendConfigToAllPeers()
             return(False, None)
@@ -399,8 +409,9 @@ class Connection():
             match eventType:
                         case "01":
                             try:
+                                print(data)
                                 self.__unpackConfig(data)
-                                self.fDebug("Set new Config: " + str(Connection.globalConfig))
+                                self.fDebug("Set new Config: " + str(Connection.config))
                                 self.__sendACK()
                             except:
                                 raise
@@ -479,6 +490,7 @@ class Connection():
             return
    
 def decode(message):
+    print("Message was:" + str(message))
     opcode = (message[0:1]).hex()
     match opcode: 
         case "02":

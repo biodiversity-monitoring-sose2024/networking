@@ -6,7 +6,7 @@ def upperConfigPoll(args, controlPID):
     try:
         print("Polling Config")
         clientSocket = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
-        clientSocket.connect((random.choice(messages.Connection.globalConfig[0]),args.T))
+        clientSocket.connect((random.choice(messages.Connection.config.upper),args.T))
         print(clientSocket)
         connection = messages.Connection(clientSocket, controlPID, args.A, args.D, args.T)
         connection.requestConfig()
@@ -19,13 +19,16 @@ def connectToNegotiator(args, controlPID):
         clientSocket.connect((args.E,args.T))
         connection = messages.Connection(clientSocket, controlPID, args.A, args.D, args.T)
         connection.joinNetwork()
+        while(len(messages.Connection.config.upper) == 0):
+            print("No Uppers, waiting!")
+            time.sleep(5)
     except:
         raise
 
-
-def handleIncoming(args, serverSocket):
+def handleIncoming(args, serverSocket, parentPID):
+    parentProcess = psutil.Process(parentPID)
     print("Handling incoming on " + str(args.P))
-    while True:
+    while parentProcess.status()!= psutil.STATUS_ZOMBIE:
         print("Loop")
         try:
             serverSocket.listen()
@@ -68,13 +71,13 @@ if __name__ == "__main__":
     serverSocket = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
     serverSocket.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
     serverSocket.bind((args.A,args.P))
-    messages.Connection.globalConfig[1] = [args.A]
+    messages.Connection.config.peer = [args.A]
     #Upper -> First device in layer
     if args.U != None:
         print("Is first device in layer")
-        messages.Connection.globalConfig[0] = [args.U]
+        messages.Connection.config.upper = [args.U]
         t2 = threading.Thread(target=upperConfigPoll,args=(args,controlPID))
-        t3 = threading.Thread(target=handleIncoming,args=(args,serverSocket))
+        t3 = threading.Thread(target=handleIncoming,args=(args,serverSocket, controlPID))
         t2.setDaemon(True)
         t3.start()
         t2.start()
@@ -82,21 +85,21 @@ if __name__ == "__main__":
     #Peer -> Get Config from Peer
     elif args.E != None:
         print("Establishing connection via peer")
+        t3 = threading.Thread(target=handleIncoming,args=(args,serverSocket, controlPID))
         t1 = threading.Thread(target=connectToNegotiator,args=(args,controlPID))
         t2 = threading.Thread(target=upperConfigPoll,args=(args,controlPID))
-        t3 = threading.Thread(target=handleIncoming,args=(args,serverSocket))
         t1.setDaemon(True)
         t2.setDaemon(True)
+        t3.start()
         t1.start()
         t1.join()
         t2.start()
-        t3.start()
         t2.join()
     #Runs as server
     elif args.S:
         print("Running as main Server")
         messages.Connection.path = args.D
-        handleIncoming(args,serverSocket)
+        handleIncoming(args,serverSocket, controlPID)
         
     else:
         raise AttributeError
@@ -108,7 +111,7 @@ if __name__ == "__main__":
             if len(files) != 0:
                 for file in files:
                     clientSocket = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
-                    clientSocket.connect((random.choice(messages.Connection.globalConfig[0]),args.T))
+                    clientSocket.connect((random.choice(messages.Connection.config.upper),args.T))
                     connection = messages.Connection(clientSocket, controlPID, args.A, args.D, args.T)
                     connection.createSessionMessage("20")
                     f = open(args.I + "/" + file,"rb")
