@@ -133,12 +133,13 @@ def byteListToIp(ipBytearray):
 class Config():
         upper = []
         peer = []
+        timeslotUnix = 0
 
 class Connection():
     #0 = upper, 1 = peer
     
     config = Config()
-    path = "home/"
+    path = "/home"
     debug = True
     dataTypes = {
         "01": ".wav",
@@ -146,13 +147,6 @@ class Connection():
         "03": ".txt"
      }
     __serverPort = 5001
-    
-    """def __init__(self, connsock, upperIP, parentProcess, ownIP, path) :
-        self.__sock = connsock
-        self.__parentProcess = parentProcess
-        self.__macAddr = hex(uuid.getnode())
-        self.__ownIP = ownIP
-        self.path = path"""
     
     def __init__(self, connsock, parentProcess, ownIP, path, serverPort):
         self.__sock = connsock
@@ -165,6 +159,7 @@ class Connection():
     
     __ACK = bytes.fromhex("0000000101")
     __RST = bytes.fromhex("0000000100")
+    __OOC = bytes.fromhex("0000000110")
 
     def fDebug(self,message):
         if self.debug == True:
@@ -175,6 +170,9 @@ class Connection():
         return result
 
     def __sendACK(self):
+        peerAddr = self.__sock.getpeername()
+        if peerAddr not in self.config.peer:
+            self.__sendOutOfCluster()
         self.__sock.send(self.__ACK)
         self.fDebug("ACK sent!")
         return
@@ -182,7 +180,11 @@ class Connection():
     def __sendRST(self):
         self.__sock.send(self.__RST)
         self.fDebug("RST sent!")
-        raise ReceivedRSTError
+        return
+
+    def __sendOutOfCluster(self):
+        self.__sock.send(self.__OOC)
+        self.fDebug("OOC sent!")
         return
 
     def __sendBusy(self, time):
@@ -199,10 +201,14 @@ class Connection():
             opcode = response[4:5].hex()
             match opcode:
                 case "00":
+                    self.fDebug("Received RST when waiting for ACK")
                     raise ReceivedRSTError
                 case "02":
-                    raise ReceivedBusyError(int.from_bytes(response[5:],"big"))
+                    duration = int.from_bytes(response[5:],"big")
+                    self.fDebug("Received Busy for " + str(duration) + "when waiting for ACK")
+                    raise ReceivedBusyError(duration)
                 case "04":
+                    self.fDebug("Received OutOfClusterError when waiting for ACK")
                     raise OutOfClusterError()
                 case "01":
                     self.fDebug("Received ACK!")
@@ -222,7 +228,7 @@ class Connection():
     def packAndSendData(self, sourcemac, timestamp, dataType, data):
         #hardcoding power as 100%
         power = 100
-        dataLen = len(data)
+        dataLen = len(data) 
         message = encode("20",(sourcemac,timestamp,dataType,dataLen,data))
         self.sendMessage(message)
     
@@ -269,7 +275,7 @@ class Connection():
             raise
                  
     def __sendConfig(self):
-        self.__sendResponse(encode("03",(0, len(self.config.peer),self.config.peer)))
+        self.__sendResponse(encode("03",(self.config.timeslotUnix, len(self.config.peer),self.config.peer)))
         self.fDebug("Config sent!")
 
     def __sendHello(self):
@@ -470,10 +476,10 @@ class Connection():
                     dataType = Connection.dataTypes[dataType]
                     self.fDebug("Received message has type " + dataType)
                     try:
-                        f = open(Connection.path + "/" + sourceID.hex()+ "/" + str(timestamp) + dataType , "ab")
+                        f = open(Connection.path + "/" + sourceID.hex() + str(timestamp) + dataType , "ab")
                     except FileNotFoundError:
                         os.mkdir(Connection.path+ "/" + sourceID.hex())
-                        f = open(Connection.path + "/" + sourceID.hex()+ "/" + str(timestamp) + dataType , "wb")
+                        f = open(Connection.path + "/" + sourceID.hex() + str(timestamp) + dataType , "wb")
                     f.write(data)
                     f.close()
                     self.__sendACK()
@@ -490,7 +496,6 @@ class Connection():
             return
    
 def decode(message):
-    print("Message was:" + str(message))
     opcode = (message[0:1]).hex()
     match opcode: 
         case "02":

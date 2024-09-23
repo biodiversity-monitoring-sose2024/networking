@@ -1,6 +1,5 @@
 import messages, threading, socket, os, argparse, psutil, random, time
 
-#Testkommentar
 
 def upperConfigPoll(args, controlPID):
     try:
@@ -16,7 +15,7 @@ def upperConfigPoll(args, controlPID):
 def connectToNegotiator(args, controlPID):
     try:
         clientSocket = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
-        clientSocket.connect((args.E,args.T))
+        clientSocket.connect((random.choice(messages.Connection.config.peer),args.T))
         connection = messages.Connection(clientSocket, controlPID, args.A, args.D, args.T)
         connection.joinNetwork()
         while(len(messages.Connection.config.upper) == 0):
@@ -38,14 +37,24 @@ def handleIncoming(args, serverSocket, parentPID):
             connection.handleNewIncoming(0)
         except ConnectionAbortedError:
             print("Connection closed by peer!")
+        except messages.OutOfClusterError:
+            print("Received Out Of Cluster, attemting to reconnect...")
+            try:
+                connectToNegotiator(parentPID)
+            except:
+                print("Failed to reconnect!")        
+            
         except: 
             raise
 
 def pollOnIntervall(args, controlPID, intervall):
     parentProc = psutil.Process(controlPID)
     while parentProc.status()!= psutil.STATUS_ZOMBIE:
-        upperConfigPoll(args, controlPID)
-        time.sleep(intervall)
+        try:
+            upperConfigPoll(args, controlPID)
+            time.sleep(intervall)
+        except:
+            raise
         
 if __name__ == "__main__":
     controlPID = os.getpid()
@@ -76,22 +85,23 @@ if __name__ == "__main__":
     messages.Connection.config.peer = [args.A]
     #Upper -> First device in layer
     if args.U != None:
+        messages.Connection.path = args.D
         print("Is first device in layer")
         messages.Connection.config.upper = [args.U]
-        t2 = threading.Thread(target=upperConfigPoll,args=(args,controlPID))
-        t3 = threading.Thread(target=handleIncoming,args=(args,serverSocket, controlPID))
+        t2 = threading.Thread(target=upperConfigPoll,args=(args,controlPID), daemon= True)
+        t3 = threading.Thread(target=handleIncoming,args=(args,serverSocket, controlPID),daemon= True)
         t2.setDaemon(True)
         t3.start()
         t2.start()
         t2.join()
     #Peer -> Get Config from Peer
     elif args.E != None:
+        messages.Connection.path = args.D
         print("Establishing connection via peer")
-        t3 = threading.Thread(target=handleIncoming,args=(args,serverSocket, controlPID))
-        t1 = threading.Thread(target=connectToNegotiator,args=(args,controlPID))
-        t2 = threading.Thread(target=upperConfigPoll,args=(args,controlPID))
-        t1.setDaemon(True)
-        t2.setDaemon(True)
+        messages.Connection.config.peer.append(args.E)
+        t3 = threading.Thread(target=handleIncoming,args=(args,serverSocket, controlPID),daemon= True)
+        t1 = threading.Thread(target=connectToNegotiator,args=(args,controlPID),daemon= True)
+        t2 = threading.Thread(target=upperConfigPoll,args=(args,controlPID),daemon= True)
         t3.start()
         t1.start()
         t1.join()
@@ -116,19 +126,26 @@ if __name__ == "__main__":
                     clientSocket.connect((random.choice(messages.Connection.config.upper),args.T))
                     connection = messages.Connection(clientSocket, controlPID, args.A, args.D, args.T)
                     connection.createSessionMessage("20")
-                    f = open(args.I + "/" + file,"rb")
+                    f = open(args.I  + file,"rb")
                     data = f.read()
-                    if file.endsWith(".wav"):
+                    if file.endswith(".wav"):
                         dataType = bytes.fromhex("01")
                     elif file.endswith(".csv"):
                         dataType = bytes.fromhex("02")
                     else:
                         dataType = bytes.fromhex("03")
-                    sourcemac = bytes.fromhex(file[0:6])    
-                    timestamp = file[6:14]
-                    connection.packAndSendData(sourcemac,timestamp,dataType,data)
+                    sourcemac = bytes.fromhex(file[0:12])    
+                    timestamp = int(file[12:20])
+                    try:
+                        connection.packAndSendData(sourcemac,timestamp,dataType,data)
+                    except messages.ReceivedBusyError as e:
+                        if e.duration < 15:
+                            time.sleep(e.duration)
+                        else:
+                            continue
                     f.close()
-                    os.remove(f)
+                    os.remove(args.I + "/" + file)
             time.sleep(15)
+            
 
 
