@@ -292,7 +292,8 @@ class Connection():
                  
     def __sendConfig(self):
         #Sends the devices config to the connection peer. Should be a lower device
-        self.__sendResponse(encode("03",(self.config.timeslotUnix, len(self.config.peer),self.config.peer)))
+        self.fDebug("Sending Config:\nUppers:" + str(Connection.config.upper) + "\nPeers:"+str(Connection.config.peer))
+        self.__sendResponse(encode("03",(self.config.timeslotUnix, len(Connection.config.peer),Connection.config.peer)))
         self.fDebug("Config sent!")
 
     def __sendHello(self):
@@ -334,6 +335,7 @@ class Connection():
             raise
         except TimeoutError:
             self.fDebug("Timeout on connection! Freeing ressources.")
+            raise
         except SystemExit:
             sys.exit()
         except:
@@ -364,7 +366,7 @@ class Connection():
             self.__sendMessage(leaveMessage)
             raise UnexpectedMessageError(message[0],configBytes)
         (opcode,timeslot,nextLevelAddrLen,listOfAddressesNL) = message
-        self.config.upper = byteListToIp(listOfAddressesNL)
+        Connection.config.upper = byteListToIp(listOfAddressesNL)
         self.fDebug("Config gotten! New Config: " + str(Connection.config))
         self.__sendACK()
         return
@@ -394,7 +396,7 @@ class Connection():
         id = 1
         ownConfig = self.__packOwnConfig()
         data = (self.__macAddr, ipListToBytes([self.__ownIP]) , id.to_bytes(1,"big"), ownConfig)
-        for target in self.config.peer:
+        for target in Connection.config.peer:
             if target != self.__ownIP:
                 try:
                     clientSocket = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
@@ -403,15 +405,16 @@ class Connection():
                     message = encode("ff", data)
                     newConnection.sendMessage(message)
                 except Exception as e:
-                    self.config.peer.remove(target)
+                    Connection.config.peer.remove(target)
                     self.__sendConfigToAllPeers()
         return
 
     def __packOwnConfig(self):
         #Packs the own Config 
-        ipUpperBytes = ipListToBytes(self.config.upper)
+        self.fDebug("Packing Config:\nUppers:" + str(Connection.config.upper) + "\nPeers:"+str(Connection.config.peer))
+        ipUpperBytes = ipListToBytes(Connection.config.upper)
         upperConfigLength = struct.pack("!B", len(ipUpperBytes) )
-        message = upperConfigLength + ipUpperBytes + ipListToBytes(self.config.peer)
+        message = upperConfigLength + ipUpperBytes + ipListToBytes(Connection.config.peer)
         return message
     
     def __unpackConfig(self, config):
@@ -428,7 +431,7 @@ class Connection():
     def __checkPeerInConfig(self):
         #Checks if the Connection peer is in own Config.
         peer = self.__sock.getpeername()
-        if peer not in self.config.peer:
+        if peer not in Connection.config.peer:
             self.__sendOutOfCluster()
             raise OutOfClusterError
         
@@ -456,7 +459,7 @@ class Connection():
             except:
                 raise
             ipList = byteListToIp(targetIP)
-            self.config.peer = self.config.peer + ipList
+            Connection.config.peer = Connection.config.peer + ipList
             self.fDebug("Received Hello! New Config: \n" + "Uppers: " + str(Connection.config.upper) +"\n" + "Peers: " + str(Connection.config.peer))
             self.__sendACK()
             self.__sendConfigToAllPeers()
