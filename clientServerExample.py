@@ -5,8 +5,8 @@ def upperConfigPoll(args, controlPID):
     try:
         print("Polling Config")
         clientSocket = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+        clientSocket.settimeout(300)
         clientSocket.connect((random.choice(messages.Connection.config.upper),args.T))
-        print(clientSocket)
         connection = messages.Connection(clientSocket, controlPID, args.A, args.D, args.T)
         connection.requestConfig()
     except:
@@ -15,6 +15,7 @@ def upperConfigPoll(args, controlPID):
 def connectToNegotiator(args, controlPID):
     try:
         clientSocket = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+        clientSocket.settimeout(300)
         clientSocket.connect((random.choice(messages.Connection.config.peer),args.T))
         connection = messages.Connection(clientSocket, controlPID, args.A, args.D, args.T)
         connection.joinNetwork()
@@ -24,28 +25,30 @@ def connectToNegotiator(args, controlPID):
     except:
         raise
 
+def threadIncoming(args,connSocket, parentPID):
+    try:
+        connection = messages.Connection(connSocket, controlPID, args.A, args.D, args.T)
+        connection.handleNewIncoming(0)
+    except ConnectionAbortedError:
+        print("Connection closed by peer!")
+    except messages.OutOfClusterError:
+        print("Received Out Of Cluster, attemting to reconnect...")
+        try:
+            connectToNegotiator(parentPID)
+        except:
+            print("Failed to reconnect!")
+                   
 def handleIncoming(args, serverSocket, parentPID):
     parentProcess = psutil.Process(parentPID)
     print("Handling incoming on " + str(args.P))
     while parentProcess.status()!= psutil.STATUS_ZOMBIE:
         print("Loop")
-        try:
-            serverSocket.listen()
-            connSocket,addr = serverSocket.accept()
-            print("Listen returns new connected socket")
-            connection = messages.Connection(connSocket, controlPID, args.A, args.D, args.T)
-            connection.handleNewIncoming(0)
-        except ConnectionAbortedError:
-            print("Connection closed by peer!")
-        except messages.OutOfClusterError:
-            print("Received Out Of Cluster, attemting to reconnect...")
-            try:
-                connectToNegotiator(parentPID)
-            except:
-                print("Failed to reconnect!")        
+        serverSocket.listen()
+        connSocket,addr = serverSocket.accept()
+        connSocket.settimeout(300)
+        print("Listen returns new connected socket")
+        threading.Thread(target=threadIncoming,args=(args,connSocket,controlPID), daemon= True).start()
             
-        except: 
-            raise
 
 def pollOnIntervall(args, controlPID, intervall):
     parentProc = psutil.Process(controlPID)
