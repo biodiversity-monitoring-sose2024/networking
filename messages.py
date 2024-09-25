@@ -153,6 +153,7 @@ class Connection():
         "03": ".txt"
      }
     __serverPort = 5001
+    nodeNames = {}
     
     def __init__(self, connsock, parentProcess, ownIP, path, serverPort):
         self.__sock = connsock
