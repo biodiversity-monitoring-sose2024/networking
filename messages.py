@@ -557,13 +557,13 @@ class Connection():
                     self.fDebug("Received message has type " + dataType)
                     if dataType == ".csv":
                         try:
-                            f = open(Connection.path + "/" + sourceID.hex() + str(timestamp) + dataType , "ab")
+                            f = open(Connection.path + sourceID.hex() + str(timestamp) + dataType , "ab")
                         except FileNotFoundError:
                             os.mkdir(Connection.path+ "/" + sourceID.hex())
                             f = open(Connection.path + "/" + sourceID.hex() + str(timestamp) + dataType , "wb")
                     else:
                         try:
-                            f = open(Connection.path + "/" + sourceID.hex() + "/" + str(timestamp) + dataType , "wb")
+                            f = open(Connection.path  + "/"  + sourceID.hex() + str(timestamp) + dataType , "wb")
                         except FileNotFoundError:
                             os.mkdir(Connection.path+ "/" + sourceID.hex())
                             f = open(Connection.path + "/" + sourceID.hex() + "/" + str(timestamp) + dataType , "wb")

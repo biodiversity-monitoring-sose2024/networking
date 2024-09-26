@@ -138,7 +138,7 @@ if __name__ == "__main__":
                     else:
                         dataType = bytes.fromhex("03")
                     sourcemac = bytes.fromhex(file[0:12])    
-                    timestamp = int(file[12:20])
+                    timestamp = int(file[12:-4])
                     try:
                         connection.packAndSendData(sourcemac,timestamp,dataType,data)
                     except messages.ReceivedBusyError as e:
