@@ -467,10 +467,6 @@ class Connection():
             return(False, None)
         
         elif opcode == "ff":
-            try:
-                self.__checkPeerInConfig()
-            except:
-                return
             self.fDebug("Receiving Event!")
             try:
                 (opcode,targetIP,eventType,data) = decode(message)
